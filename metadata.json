@@ -1,0 +1,6 @@
+{
+  "name": "Universal Social Media Downloader",
+  "description": "A high-fidelity universal media downloader for YouTube, Facebook, and TikTok. Paste links to download audio in high quality, high-definition videos, and watermark-free TikTok media.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
