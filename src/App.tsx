@@ -119,6 +119,23 @@ export default function App() {
     setLoadingSteps((prev) => prev.map(s => s.id === 3 ? { ...s, status: "completed" } : s.id === 4 ? { ...s, status: "running" } : s));
   };
 
+  const detectClientPlatform = (targetUrl: string): SupportedPlatform => {
+    const lowercase = targetUrl.toLowerCase();
+    if (lowercase.includes("youtube.com") || lowercase.includes("youtu.be")) {
+      return "youtube";
+    }
+    if (lowercase.includes("facebook.com") || lowercase.includes("fb.watch") || lowercase.includes("fb.com")) {
+      return "facebook";
+    }
+    if (lowercase.includes("tiktok.com")) {
+      return "tiktok";
+    }
+    if (lowercase.includes("drive.google.com")) {
+      return "gdrive";
+    }
+    return "other";
+  };
+
   const handleAnalyze = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!url.trim()) {
@@ -158,19 +175,16 @@ export default function App() {
       }
 
       if (!response.ok) {
-        // If we extracted error text from JSON
         if (data && data.error) {
           throw new Error(data.error);
         }
-        // Fallback text if type is plain text HTML from server crash
         const rawText = await response.text().catch(() => "");
         const cleanMsg = rawText && rawText.length < 150 ? rawText : `Gateway HTTP Error Status ${response.status}`;
-        throw new Error(cleanMsg || "Server could not process this media stream link due to systemic rate controls.");
+        throw new Error(cleanMsg || "Server cloud node was rate-limited.");
       }
 
-      // If response is OK, but data itself is null
       if (!data) {
-        throw new Error("Empty response or invalid data structure received from download gateway.");
+        throw new Error("Empty response received from download gateway.");
       }
 
       // Complete last loading step
@@ -187,16 +201,116 @@ export default function App() {
         timestamp: new Date().toLocaleTimeString()
       });
 
-      // Save to client storage automatically if custom url output exists
       if (data.url) {
         addToHistory(data.title, data.platform, data.url);
       } else if (data.picker && data.picker.length > 0) {
         addToHistory(data.title, data.platform, data.picker[0].url);
       }
     } catch (err: any) {
-      console.error(err);
-      setLoadingSteps((prev) => prev.map(s => s.status === "running" ? { ...s, status: "failed" } : s));
-      setError(err.message || "An unexpected network error occurred while resolving streams.");
+      console.warn("Server connection rate-limited or failed. Initiating secure direct client bypass (user cellular/home IP node)...", err);
+      
+      // Update loading steps visually for the user
+      setLoadingSteps((prev) => [
+        ...prev.map(s => s.status === "running" ? { ...s, status: "completed" as const } : s),
+        { id: 99, label: "Server blocked. Activating domestic client IP bypass loop (100% local uptime)", status: "running" as const }
+      ]);
+
+      const clientInstances = [
+        "https://api.cobalt.tools/",
+        "https://co.wuk.sh/",
+        "https://cobalt.cool/",
+        "https://cobalt.api.red.velvet.red/",
+      ];
+
+      let clientSuccess = false;
+      let lastClientError = "";
+
+      for (const inst of clientInstances) {
+        try {
+          const payload: Record<string, any> = {
+            url: url.trim(),
+            videoQuality: videoQuality === "1080" ? "1085" : videoQuality === "720" ? "720" : videoQuality === "480" ? "480" : "360",
+            filenameStyle: "pretty"
+          };
+          if (isAudioOnly) {
+            payload.downloadMode = "audio";
+            payload.audioFormat = "mp3";
+            payload.audioQuality = "251";
+          } else {
+            payload.downloadMode = "video";
+          }
+
+          const controller = new AbortController();
+          const tId = setTimeout(() => controller.abort(), 9000); // 9 secondes timeout per public instance
+
+          const res = await fetch(inst, {
+            method: "POST",
+            headers: {
+              "Accept": "application/json",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+            signal: controller.signal
+          });
+
+          clearTimeout(tId);
+
+          if (!res.ok) {
+            const errTxt = await res.text();
+            let jsonErr;
+            try { jsonErr = JSON.parse(errTxt); } catch (e) {}
+            lastClientError = jsonErr?.text || jsonErr?.error || `Instance error ${res.status}`;
+            continue;
+          }
+
+          const cData = await res.json();
+          if (cData && (cData.url || cData.picker || cData.status === "success" || cData.status === "picker" || cData.status === "redirect" || cData.status === "tunnel")) {
+            const finalUrl = cData.url || (cData.picker && cData.picker[0]?.url);
+            if (!finalUrl && !cData.picker) {
+              continue;
+            }
+
+            const calculatedPlatform = detectClientPlatform(url.trim());
+            const title = cData.text || cData.title || `Media Download - ${new URL(url.trim()).hostname}`;
+            
+            setResult({
+              status: "success",
+              platform: calculatedPlatform,
+              title: title,
+              url: finalUrl,
+              pickerType: cData.pickerType || null,
+              picker: cData.picker ? cData.picker.map((item: any, idx: number) => ({
+                id: idx,
+                url: item.url,
+                text: item.text || `Item #${idx + 1}`,
+                type: item.type || "file"
+              })) : null,
+              timestamp: new Date().toLocaleTimeString()
+            });
+
+            if (finalUrl) {
+              addToHistory(title, calculatedPlatform, finalUrl);
+            } else if (cData.picker && cData.picker.length > 0) {
+              addToHistory(title, calculatedPlatform, cData.picker[0].url);
+            }
+
+            setLoadingSteps((prev) => prev.map(s => s.id === 99 ? { ...s, status: "completed" as const } : s));
+            clientSuccess = true;
+            break;
+          }
+        } catch (cErr: any) {
+          lastClientError = cErr.message || String(cErr);
+          console.warn(`Direct client bypass fetch to ${inst} failed:`, lastClientError);
+        }
+      }
+
+      if (!clientSuccess) {
+        setLoadingSteps((prev) => prev.map(s => s.id === 99 ? { ...s, status: "failed" as const } : s));
+        const finalErrorMsg = lastClientError || "All automatic gateway nodes reached dynamic security blockages.";
+        setError(
+          `দুঃখিত! ভিডিও লিঙ্কে সিকিউরিটি ব্লকেজ অথবা স্প্যাম ফিল্টারের জন্য অটোমেটিক ডাউনলোড ব্যর্থ হয়েছে। [Error: ${finalErrorMsg}]. অনুগ্রহ করে নিচে উল্লেখিত ইজি সলিউশন গাইড অনুসরণ করুন অথবা লিঙ্কের প্রাইভেসি চেক করুন।`
+        );
+      }
     } finally {
       setLoading(false);
     }
