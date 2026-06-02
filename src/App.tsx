@@ -146,10 +146,31 @@ export default function App() {
         })
       });
 
-      const data = await response.json();
+      let data: any = null;
+      const contentType = response.headers.get("content-type");
+      
+      if (contentType && contentType.includes("application/json")) {
+        try {
+          data = await response.json();
+        } catch (jsonErr) {
+          console.error("JSON parsing failed, falling back to text representation:", jsonErr);
+        }
+      }
 
       if (!response.ok) {
-        throw new Error(data.error || "Server could not process this media stream link.");
+        // If we extracted error text from JSON
+        if (data && data.error) {
+          throw new Error(data.error);
+        }
+        // Fallback text if type is plain text HTML from server crash
+        const rawText = await response.text().catch(() => "");
+        const cleanMsg = rawText && rawText.length < 150 ? rawText : `Gateway HTTP Error Status ${response.status}`;
+        throw new Error(cleanMsg || "Server could not process this media stream link due to systemic rate controls.");
+      }
+
+      // If response is OK, but data itself is null
+      if (!data) {
+        throw new Error("Empty response or invalid data structure received from download gateway.");
       }
 
       // Complete last loading step
